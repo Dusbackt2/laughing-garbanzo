@@ -592,6 +592,255 @@ conn.Write(){
 goroutine-per-connection 编程风格<br>
 结合多路复用的性能和阻塞模型的简洁<br>
 
+***
+内存::
+栈内存
+协程栈的作用:
+协程的执行路径
+局部变量
+函数传参
+协程栈在堆内存上
+堆内存在操作系统的虚拟内存上
+
+```go
+
+func sum(a,b) int{
+  sum:=0
+  sum=a+b
+  return sum
+}
+
+
+func main(){
+  a=3
+  b=5
+  print(
+    sum(a,b)
+  )
+}
+```
+                             stack 初始 2K-4K
+-----------------------------------------------------------------------             
+runtime.main                                   
+-----------------------------------------------------------------------
+main.main栈帧                runtime.main的栈基值
+                            a=3
+                            b=5
+                            sum函数的返回值======================>sum=8 
+                            sum参数5
+                            sum参数3
+                            sum返回后的指令
+-----------------------------------------------------------------------
+                            main.main的栈基值
+sum的栈帧                    sum=0----------------------->sum=8  回收栈帧
+-----------------------------------------------------------------------
+
+协程栈不够？变量多,大，栈帧调用多
+
+逃逸分析
+指针逃逸
+```go
+func a() *int{
+  c:=0
+  return &c
+}
+```
+空接口逃逸(往往使用反射)
+
+```go
+func b(){
+  c:=0
+  fmt.Println(c)
+}
+```
+
+大变量逃逸 超过64K
+```go
+make(int[],10000)
+```
+
+栈扩容
+morestack() 判断栈空间是否足够
+1.13之前分段栈
+缺点：不连续空间来回跳转
+连续栈
+扩容+copy 扩缩容
+
+堆内存
+heapArena 
+Go每次申请的虚拟内存单元是64MB
+最多有20^20个内存单元
+内存单元也叫heapArena
+mheap=heapArena的集合
+
+heap struct{
+  mcentral
+}
+
+type heapArena struct{
+
+}
+
+线性分配
+链表分配
+分级分配
+mspan  67种mspan
+
+mcentral 目录索引
+***
+```
+      class0                   class1                   class2
+mcentral   mcentral     mcentral     mcentral    mcentral     mcentral
+ scan       noscan        scan       noscan        scan       noscan
+                                  ↘️            ↙️
+ heapArena   heapArena   heapArena   heapArena  heapArena  heapArena
+```
+***
+mcentral 互斥锁保护
+为了高并发的性能
+给每个P mchache
+***
+```
+      p                 P1
+  mchache            mchache
+span*68+span*68    span*68+span*68
+scan    noscan     scan    noscan
+refill 交换操作 nextFreeFast
+```
+***
+
+对象分级
+Tiny 微对象(0,16B) 无指针<br>
+Small 小对象[16B,32KB] <br>
+Large 大对象(32KB,+00)<br>
+***
+mallocgc()
+Tiny 分配==>拿到class2的，将多个微对象合并成一个16Byte存入<br>
+Large makeSpanClass(0,noscan)
+***
+回收内存
+GC
+标记清除
+标记整理
+标记复制
+
+什么不能被清除
+栈上的指针，全局指针，寄存器中的指针 RootSet
+可达性分析
+stop the world
+
+减小GC对性能的影响
+***
+三色标记，并发标记
+黑色 灰色 白色
+有用 有用 无用
+已析 未分析
+***
+Yuasa删除屏障
+删除指针的对象置灰
+Dijkstra插入屏障
+并发标记（插入）
+黑色指向白色对象
+白色对象置灰
+***
+GC触发
+定时触发 sysmon定时检查
+用户显示出发 runtime.gc()
+申请内存的时候触发
+***
+
+高级特性::
+
+cgo
+
+```go
+package main
+
+/*
+int sum(int a,int b){
+  return a+b;
+}
+*/
+import "C"
+
+func main(){
+  println(C.sum(1,1))
+}
+```
+
+go tool cgo main.go
+调度器和协程配合
+
+defer
+记录信息
+函数结尾调用 deferreturn
+
+在堆上开辟一个 p 里的 sched.deferpool
+遇到defer语句将信息放入deferpool
+
+栈上分配
+
+recover
+panic.go
+
+反射
+获取对象的类型
+对any赋值
+调用任意方法
+
+元数据
+reflect.Type
+reflect.Value
+
+```go
+func main(){
+  s:="mooky"
+  sg:=reflect.TypeOf(s)
+  sg.Name()
+  sv:=reflect.ValueOf(s)
+  sv
+  sv.Interface().(string).var
+
+}
+```
+
+```go
+package main
+
+import (
+	"fmt"
+	"reflect"
+)
+
+func CallAdd(f func(a, b int) int, x, y int) {
+	v := reflect.ValueOf(f)
+	if v.Kind() != reflect.Func {
+		return
+	}
+
+	argv := make([]reflect.Value, 2)
+	argv[0] = reflect.ValueOf(x)
+	argv[1] = reflect.ValueOf(y)
+	v2 := v.Call(argv)
+	fmt.Println(v2[0].Int())
+}
+
+func Add(a, b int) int {
+	c := a + b
+	return c
+}
+
+func Add2(a, b int) int {
+	c := a - b
+	return c
+}
+
+func main() {
+	CallAdd(Add, 2, 3)
+}
+
+```
+
 
 
 
